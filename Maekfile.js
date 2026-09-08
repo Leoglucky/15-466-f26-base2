@@ -22,6 +22,14 @@ const maek = init_maek();
 
 const NEST_LIBS = `../nest-libs/${maek.OS}`;
 
+// path to the blender executable used to export meshes/scenes from .blend files:
+// used for pipeline
+const BLENDER = process.env.BLENDER || (
+	maek.OS === "windows" ? `C:/Program Files (x86)/Steam/steamapps/common/Blender/blender.exe` :
+	maek.OS === "macos" ? `/Applications/Blender.app/Contents/MacOS/Blender` :
+	`blender`
+);
+
 //set compile flags (these can also be overridden per-task using the "options" parameter):
 if (maek.OS === "windows") {
 	maek.options.CPPFlags.push(
@@ -106,6 +114,12 @@ if (maek.OS === 'windows') {
 	copies.push( maek.COPY(`${NEST_LIBS}/SDL3/dist/SDL3.dll`, `scenes/SDL3.dll`) );
 }
 
+//export game assets from Blender (reads scenes/MoleGame.blend, writes into dist/):
+const assets = [
+	maek.BLENDER_EXPORT(BLENDER, 'scenes/export-meshes.py', 'scenes/MoleGame.blend', 'Main', 'dist/molegame.pnct'),
+	maek.BLENDER_EXPORT(BLENDER, 'scenes/export-scene.py', 'scenes/MoleGame.blend', 'Main', 'dist/molegame.scene')
+];
+
 //call rules on the maek object to specify tasks.
 // rules generally look like:
 //  output = maek.RULE_NAME(input [, output] [, {options}])
@@ -157,7 +171,7 @@ const show_meshes_exe = maek.LINK([...show_mesh_names, ...common_names], 'scenes
 const show_scene_exe = maek.LINK([...show_scene_names, ...common_names], 'scenes/show-scene');
 
 //set the default target to the game (and copy the readme files):
-maek.TARGETS = [game_exe, show_meshes_exe, show_scene_exe, ...copies];
+maek.TARGETS = [game_exe, show_meshes_exe, show_scene_exe, ...copies, ...assets];
 
 //Note that tasks that produce ':abstract targets' are never cached.
 // This is similar to how .PHONY targets behave in make.
@@ -292,6 +306,30 @@ function init_maek() {
 		maek.tasks[dstFile] = task;
 
 		return dstFile;
+	};
+
+	//BLENDER_EXPORT runs a blender export script to create asset file:
+	// 'BLENDER_EXPORT(blenderExe, script, blendFile, collection, outFile)'
+	maek.BLENDER_EXPORT = (blenderExe, script, blendFile, collection, outFile) => {
+		const task = async () => {
+			await fsPromises.mkdir(path.dirname(outFile), { recursive: true });
+			await run(
+				//'--python-exit-code 1' makes blender actually report failure if the script throws:
+				[blenderExe, '--background', '--python-exit-code', '1', '--python', script, '--', `${blendFile}:${collection}`, outFile],
+				task.label,
+				async () => {
+					return {
+						read: [blendFile, script],
+						written: [outFile]
+					};
+				}
+			);
+		};
+		task.depends = [blendFile, script];
+		task.label = `BLENDER_EXPORT ${outFile}`;
+		maek.tasks[outFile] = task;
+
+		return outFile;
 	};
 
 
